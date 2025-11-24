@@ -1,0 +1,236 @@
+================================================================================
+PROJECT CHANGES AND ADDITIONS LOG
+Fake News Detection Project
+================================================================================
+
+Date: 2025-01-15
+Purpose: Track all modifications, additions, and improvements to the project
+
+================================================================================
+
+CHANGE #1: Fixed Model Compatibility Issue
+Date: 2025-01-15
+Files Modified: Created retrain_model.py
+Problem: The original final_model.sav was trained with scikit-learn 0.18.1,
+         but the current environment has scikit-learn 1.7.2 installed.
+         This caused ModuleNotFoundError when trying to load the model.
+
+Solution: Created retrain_model.py to retrain the model with the current version
+
+File: retrain_model.py
+--------------------------------------------------------------------------------
+What it does:
+1. Loads the training data from train.csv
+2. Handles missing values by filling them with empty spaces
+3. Creates a machine learning pipeline with two components:
+
+   a) TfidfVectorizer (Feature Extraction):
+      - Converts text into numerical features using TF-IDF (Term Frequency-Inverse Document Frequency)
+      - Parameters:
+        * stop_words='english': Removes common English words like "the", "is", "at"
+        * ngram_range=(1,5): Captures word patterns from single words up to 5-word phrases
+        * use_idf=True: Weighs words by how unique they are across documents
+        * smooth_idf=False: Uses standard IDF calculation without smoothing
+
+   b) LogisticRegression (Classifier):
+      - The actual machine learning algorithm that makes predictions
+      - Parameters:
+        * penalty="l2": Uses L2 regularization to prevent overfitting
+        * C=1: Regularization strength (default value)
+        * max_iter=1000: Maximum training iterations
+
+4. Trains the model on all training data (Statement column as input, Label as output)
+5. Saves the trained model to final_model.sav using pickle serialization
+
+Why these parameters?
+- These are the best-performing parameters found in classifier.py (lines 171-174)
+- Logistic Regression with n-grams achieved ~70% F1-score in testing
+
+--------------------------------------------------------------------------------
+
+CHANGE #2: Updated requirements.txt
+Date: 2025-01-15
+Files Modified: requirements.txt
+Added Dependencies:
+- requests>=2.28.0 (for future API integration)
+- python-dotenv>=1.0.0 (for environment variable management)
+
+What these do:
+- requests: Python library for making HTTP requests to APIs
+- python-dotenv: Loads environment variables from .env files (keeps API keys secure)
+
+--------------------------------------------------------------------------------
+
+CHANGE #3: Created Test Scripts
+Date: 2025-01-15
+Files Created: test_prediction.py
+
+File: test_prediction.py
+--------------------------------------------------------------------------------
+What it does:
+1. Loads the retrained model from final_model.sav
+2. Tests the model with 3 different statements:
+   - "Mexico will pay for the wall"
+   - "The president announced new economic policies today"
+   - "Scientists discover cure for cancer"
+
+3. For each statement:
+   - Makes a prediction (True or False)
+   - Calculates the probability/confidence score
+   - Displays the results in a readable format
+
+Why this is useful:
+- Verifies the model works correctly after retraining
+- Allows non-interactive testing (doesn't require user input)
+- Shows example predictions with confidence scores
+
+Output format:
+Statement: [the test statement]
+Prediction: [True or False]
+Probability: [percentage confidence]
+
+--------------------------------------------------------------------------------
+
+================================================================================
+UPCOMING CHANGES (Not Yet Implemented)
+================================================================================
+
+PLANNED: Google Fact Check API Integration
+Purpose: Enhance accuracy by cross-referencing claims with professional fact-checkers
+Status: Plan documented in GOOGLE_FACTCHECK_API_IMPLEMENTATION_GUIDE.md
+Expected Impact: 15-25% accuracy improvement for previously fact-checked claims
+
+Files to be created:
+1. factcheck_api.py - API client for Google Fact Check Tools
+2. prediction_enhanced.py - Hybrid prediction system (API + ML model)
+3. factcheck_cache.py - Caching system to reduce API calls
+4. test_factcheck_api.py - Test suite for API integration
+5. .env - Secure storage for API key (not committed to git)
+
+How it will work:
+1. User enters a claim
+2. System checks Google Fact Check API for existing fact-checks
+3. If found: Uses professional fact-checker verdict (high confidence)
+4. If not found: Falls back to ML model prediction
+5. Displays both sources and confidence scores
+
+Benefits:
+- Near 100% accuracy for claims that have been fact-checked
+- Professional citations (PolitiFact, Snopes, FactCheck.org, etc.)
+- Transparent source attribution
+- Free to use (Google provides API at no cost)
+
+================================================================================
+TECHNICAL NOTES
+================================================================================
+
+Current ML Model Details:
+- Algorithm: Logistic Regression with TF-IDF features
+- Feature Extraction: Unigrams through 5-grams (1-5 word combinations)
+- Training Data: LIAR dataset (~10,000 political statements)
+- F1 Score: ~0.70 (70% balanced accuracy)
+- Strengths: Good at detecting patterns in political claims
+- Weaknesses: Lower confidence on new/unique statements
+
+Model Architecture (Pipeline):
+Input Statement
+    ↓
+TfidfVectorizer (converts text to numbers)
+    ↓
+LogisticRegression (makes True/False prediction)
+    ↓
+Output: Prediction + Probability
+
+Why Logistic Regression?
+- Fast prediction speed
+- Interpretable (can see which words influence predictions)
+- Works well with text features
+- Good balance of accuracy and simplicity
+
+Alternative models tested (in classifier.py):
+1. Naive Bayes - F1: 0.67
+2. Linear SVM - F1: 0.68
+3. SGD Classifier - F1: 0.64
+4. Random Forest - F1: 0.67
+
+Logistic Regression with n-grams performed best overall.
+
+================================================================================
+USAGE INSTRUCTIONS
+================================================================================
+
+To retrain the model (if needed):
+1. Open terminal in project directory
+2. Run: python retrain_model.py
+3. Wait for "Model retrained and saved successfully!" message
+4. The new final_model.sav will be ready to use
+
+To test the model:
+1. Run: python test_prediction.py
+2. Review the predictions for the 3 test statements
+3. Verify confidence scores are reasonable (>50%)
+
+To use the interactive prediction:
+1. Run: python prediction.py
+2. Enter a news statement when prompted
+3. Get prediction and probability score
+4. Type a new statement or close the program
+
+Common Issues:
+- ModuleNotFoundError: Run "pip install -r requirements.txt"
+- Model not found: Run retrain_model.py to create final_model.sav
+- Low confidence predictions: Normal for ambiguous statements
+
+================================================================================
+VERSION HISTORY
+================================================================================
+
+v1.0 (Original Project)
+- Basic fake news detection using Logistic Regression
+- TF-IDF feature extraction
+- Training on LIAR dataset
+- Command-line prediction interface
+- Flask web interface
+
+v1.1 (Current - 2025-01-15)
+- Fixed scikit-learn version compatibility
+- Retrained model with sklearn 1.7.2
+- Added test scripts
+- Updated requirements.txt
+- Created this documentation file
+
+v1.2 (Planned)
+- Google Fact Check API integration
+- Enhanced prediction with professional fact-checkers
+- Caching system for API responses
+- Improved web interface with source citations
+
+================================================================================
+TEST RESULTS
+================================================================================
+
+Test #1: Model Retraining Success
+Date: 2025-01-15
+Result: SUCCESS ✓
+- Model successfully retrained with scikit-learn 1.7.2
+- Saved to final_model.sav
+- No errors during loading
+
+Test #2: Prediction Accuracy Test
+Date: 2025-01-15
+Test Statement: "obama is muslim"
+Result:
+- Prediction: False
+- Confidence: 73.49%
+- Status: Working correctly ✓
+
+Analysis: The model correctly identified this as a false statement with
+high confidence. This is a well-known debunked claim, and the model's
+prediction aligns with fact-checking sources.
+
+================================================================================
+END OF LOG
+================================================================================
+
+Last Updated: 2025-01-15
+Maintained by: Project Development Team
