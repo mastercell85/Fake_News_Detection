@@ -899,5 +899,256 @@ William Yang Wang, LREC 2017
 END OF LOG
 ================================================================================
 
+CHANGE #8: Google Fact Check API Integration
+Date: 2025-01-15
+Files Created: factcheck_api.py, .env, .gitignore
+Files Modified: prediction.py
+
+Purpose: Integrate Google Fact Check Tools API to cross-reference claims with
+professional fact-checking organizations (PolitiFact, Snopes, FactCheck.org, etc.)
+for improved accuracy on previously fact-checked claims.
+
+--------------------------------------------------------------------------------
+FILES CREATED:
+
+1. factcheck_api.py
+   - API client module for Google Fact Check Tools API
+   - Handles all API communication and error handling
+   - Processes and categorizes fact-check verdicts
+
+2. .env
+   - Environment variable file for storing API key securely
+   - Contains: GOOGLE_FACTCHECK_API_KEY=your_key_here
+   - NEVER commit this file to version control
+
+3. .gitignore
+   - Excludes .env and other sensitive/generated files from git
+   - Protects API keys from accidental exposure
+
+--------------------------------------------------------------------------------
+FUNCTIONS ADDED (factcheck_api.py):
+
+Function: check_api_configured()
+--------------------------------------------------------------------------------
+Purpose: Check if API key is properly set up
+Returns: True if API key exists and is not placeholder value
+
+--------------------------------------------------------------------------------
+Function: search_fact_checks(query, language_code='en', max_results=5)
+--------------------------------------------------------------------------------
+Purpose: Search Google's database of fact-checks for a claim
+
+How it works:
+1. Sends claim text to Google Fact Check Tools API
+2. Google searches across multiple fact-checking organizations
+3. Returns matching fact-checks with ratings and source URLs
+
+Parameters:
+- query: The claim to search for
+- language_code: Language filter (default: 'en')
+- max_results: Max results to return (default: 5)
+
+Returns dictionary with:
+- success: Whether API call succeeded
+- found: Whether any fact-checks were found
+- claims: List of fact-check results with ratings and sources
+- error: Error message if failed
+
+--------------------------------------------------------------------------------
+Function: get_fact_check_summary(query)
+--------------------------------------------------------------------------------
+Purpose: Get structured summary for integration with prediction model
+
+How it works:
+1. Calls search_fact_checks() to get raw results
+2. Analyzes all ratings from fact-checkers
+3. Categorizes ratings (FALSE, TRUE, MIXED, etc.)
+4. Calculates overall verdict and confidence modifier
+5. Returns structured data for enhanced_prediction()
+
+Verdict Categories:
+- FALSE: Majority of fact-checkers rate claim as false
+- TRUE: Majority rate as true
+- MIXED: Mixed ratings from different fact-checkers
+- INCONCLUSIVE: Unable to determine clear verdict
+
+Confidence Modifier:
+- FALSE verdict: -30 to -50 (decreases TRUE confidence)
+- TRUE verdict: +30 to +50 (increases TRUE confidence)
+- MIXED/INCONCLUSIVE: 0 (no adjustment)
+
+Returns dictionary with:
+- available: Whether fact-check data is available
+- verdict: Overall fact-check verdict
+- confidence_modifier: How much to adjust ML confidence
+- sources: List of fact-checking sources with ratings and URLs
+- rating_breakdown: Count of each rating type
+
+--------------------------------------------------------------------------------
+Function: display_fact_check_results(fact_check_data)
+--------------------------------------------------------------------------------
+Purpose: Display fact-check results in formatted output
+Shows verdict, rating breakdown, confidence impact, and sources
+
+--------------------------------------------------------------------------------
+CHANGES TO prediction.py:
+
+1. ADDED IMPORTS
+   - Import factcheck_api module at startup
+   - Check if API is configured (FACTCHECK_AVAILABLE flag)
+   - Display API status on startup
+
+2. UPDATED enhanced_prediction(statement, speaker=None, use_factcheck=True)
+   Added new parameter:
+   - use_factcheck: Whether to query fact-check API (default: True)
+
+   Added fact-check integration section:
+   - Queries API if enabled and configured
+   - Applies verdict to adjust/flip prediction
+   - Tracks whether fact-check overrode ML prediction
+
+   Fact-check override logic:
+   - If verdict=FALSE and ML predicted TRUE: Flip to FALSE
+   - If verdict=TRUE and ML predicted FALSE: Flip to TRUE
+   - Adjusts confidence based on verdict strength
+
+   Added return fields:
+   - has_factcheck: Whether fact-check data available
+   - factcheck: Full fact-check data dictionary
+   - factcheck_adjustment: Confidence adjustment from fact-check
+
+3. UPDATED display_comparison()
+   - Added "Fact Check: Yes/No" row in comparison table
+   - Added GOOGLE FACT CHECK API RESULTS section showing:
+     - Verdict with visual indicator ([X] FALSE, [✓] TRUE, etc.)
+     - Whether prediction was overridden by fact-check
+     - Rating breakdown (false/true/mixed counts)
+     - Confidence impact percentage
+     - Sources with publisher names and URLs
+
+4. UPDATED main loop (mode 2 - Enhanced Only)
+   - Added fact-check results display section
+   - Shows verdict, sources, and override status
+
+--------------------------------------------------------------------------------
+SETUP INSTRUCTIONS:
+
+1. Get API Key:
+   a. Go to https://console.cloud.google.com/
+   b. Create or select a project
+   c. Go to "APIs & Services" > "Library"
+   d. Search for "Fact Check Tools API" and enable it
+   e. Go to "APIs & Services" > "Credentials"
+   f. Click "Create Credentials" > "API Key"
+   g. Copy the API key
+
+2. Configure .env file:
+   Open .env and replace YOUR_API_KEY_HERE with your actual key:
+   GOOGLE_FACTCHECK_API_KEY=AIzaSy...your_key_here
+
+3. Install required package:
+   pip install python-dotenv
+
+4. Test the API:
+   python factcheck_api.py
+
+--------------------------------------------------------------------------------
+EXAMPLE OUTPUT WITH FACT-CHECK:
+
+======================================================================
+MODEL COMPARISON: BASELINE vs ENHANCED
+======================================================================
+
+Statement: Mexico will pay for the wall
+Speaker: Donald Trump
+
+----------------------------------------------------------------------
+BASELINE (Old Model)                | ENHANCED (New Model)
+----------------------------------------------------------------------
+Prediction: True                    | Prediction: False
+Confidence: 61.71%                  | Confidence: 85.00%
+Keywords:   No                      | Keywords:   Yes
+Explanation: No                     | Explanation: Yes
+Speaker Cred: No                    | Speaker Cred: Yes
+Fact Check:   No                    | Fact Check:   Yes
+----------------------------------------------------------------------
+
+[!] PREDICTIONS DIFFER - Models disagree!
+    Baseline says: True
+    Enhanced says: False
+
+----------------------------------------------------------------------
+GOOGLE FACT CHECK API RESULTS:
+----------------------------------------------------------------------
+  Verdict: [X] FALSE - Fact-checkers rate this claim as false
+
+  ** PREDICTION OVERRIDDEN BY FACT-CHECK **
+  Reason: Professional fact-checkers rate this claim as FALSE
+
+  Rating Breakdown:
+    False ratings: 3
+    True ratings:  0
+    Mixed ratings: 0
+
+  Confidence Impact: -45.0%
+
+  Sources (3 fact-checks found):
+    1. PolitiFact: Pants on Fire
+       https://www.politifact.com/factchecks/...
+    2. Washington Post Fact Checker: Four Pinocchios
+       https://www.washingtonpost.com/...
+    3. FactCheck.org: False
+       https://www.factcheck.org/...
+
+--------------------------------------------------------------------------------
+HOW IT IMPROVES ACCURACY:
+
+1. AUTHORITATIVE OVERRIDE
+   When professional fact-checkers have already verified a claim,
+   their verdict overrides the ML model's prediction. This is more
+   accurate because fact-checkers do deep research.
+
+2. MULTIPLE SOURCES
+   The API aggregates results from many fact-checking organizations,
+   providing consensus-based verdicts rather than single opinions.
+
+3. CONFIDENCE BOOST
+   Even when predictions align, fact-check confirmation increases
+   confidence in the result.
+
+4. TRANSPARENT SOURCING
+   Users can see exactly which organizations rated the claim and
+   can click through to read the full fact-check articles.
+
+5. GRACEFUL FALLBACK
+   If no fact-checks exist for a claim, the system falls back to
+   ML model + speaker credibility (unchanged behavior).
+
+--------------------------------------------------------------------------------
+SECURITY NOTES:
+
+1. API KEY PROTECTION
+   - API key stored in .env file (not in code)
+   - .env is excluded from git via .gitignore
+   - Never commit API keys to version control
+
+2. ERROR HANDLING
+   - Graceful handling of API errors (timeout, rate limit, etc.)
+   - System continues with ML-only prediction if API fails
+
+3. RATE LIMITING (to implement)
+   - Google Fact Check API has usage limits
+   - Consider implementing caching for repeated queries
+
+--------------------------------------------------------------------------------
+DEPENDENCIES ADDED:
+
+- python-dotenv: For loading .env file
+- requests: For API HTTP calls (usually already installed)
+
+Install with: pip install python-dotenv requests
+
+================================================================================
+
 Last Updated: 2025-01-15
 Maintained by: Project Development Team
