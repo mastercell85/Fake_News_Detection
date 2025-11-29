@@ -621,18 +621,40 @@ v1.0 (Original Project)
 - Command-line prediction interface
 - Flask web interface
 
-v1.1 (Current - 2025-01-15)
+v1.1 (2025-01-15)
 - Fixed scikit-learn version compatibility
 - Retrained model with sklearn 1.7.2
 - Added test scripts
 - Updated requirements.txt
 - Created this documentation file
 
-v1.2 (Planned)
-- Google Fact Check API integration
-- Enhanced prediction with professional fact-checkers
+v1.2 (2025-01-15)
+- Added keyword highlighting feature
+- Added model comparison tracker (baseline vs enhanced)
+- Added speaker credibility scoring from LIAR dataset
+- Added explanation generation for predictions
+- Fixed boolean comparison bugs
+
+v1.3 (2025-01-15)
+- Integrated Google Fact Check Tools API
+- Added fact-check verdict display with sources
+- Fact-check can override ML predictions when evidence is strong
+- Created .env file for secure API key storage
+- Added .gitignore to protect sensitive files
+
+v1.4 (Current - 2025-01-28)
+- Added security module (security.py)
+- Implemented secure API key loading with validation
+- Added input validation and sanitization
+- Protection against XSS, injection attacks, DoS
+- Integrated security into prediction.py and factcheck_api.py
+- Updated README.md with new features and instructions
+
+v1.5 (Planned)
+- Rate limiting for API calls
 - Caching system for API responses
 - Improved web interface with source citations
+- Additional fact-checking sources
 
 ================================================================================
 TEST RESULTS
@@ -1150,5 +1172,247 @@ Install with: pip install python-dotenv requests
 
 ================================================================================
 
-Last Updated: 2025-01-15
+CHANGE #9: Security Implementations
+Date: 2025-01-28
+Files Created: security.py
+Files Modified: prediction.py, factcheck_api.py
+
+Purpose: Implement the top two recommended security measures to reduce risk:
+1. Secure Environment Variable Loading with Validation
+2. Input Validation & Sanitization
+
+--------------------------------------------------------------------------------
+FILE CREATED: security.py
+
+This module provides centralized security functions for the entire application.
+
+--------------------------------------------------------------------------------
+CLASS: SecureConfig (Singleton)
+--------------------------------------------------------------------------------
+Purpose: Secure API key loading with validation
+
+Features:
+- Singleton pattern (only one instance exists)
+- Loads API keys from .env file (never hardcoded)
+- Validates API key format before use
+- Checks file permissions on Unix systems (advisory)
+- Masks API keys for safe logging (AIza****...****Xyz)
+- Prevents common placeholder values (YOUR_API_KEY_HERE, test, etc.)
+
+Methods:
+- load_config(env_path='.env'): Load environment variables securely
+- get_api_key(key_name): Retrieve and validate API key
+- mask_api_key(api_key): Mask key for safe display
+
+Security checks performed:
+1. File existence check before reading
+2. Permission warning if file is world-readable (Unix)
+3. Manual parsing (avoids exec-based loaders)
+4. Format validation (minimum length, no placeholders)
+
+--------------------------------------------------------------------------------
+CLASS: InputValidator
+--------------------------------------------------------------------------------
+Purpose: Validate and sanitize user inputs to prevent attacks
+
+Protects against:
+- Injection attacks (SQL, command, code)
+- XSS (Cross-Site Scripting)
+- DoS via oversized inputs
+- Malicious Unicode/encoding tricks
+- Null byte injection
+
+Configuration:
+- MAX_STATEMENT_LENGTH = 5000 characters
+- MAX_SPEAKER_LENGTH = 200 characters
+- MIN_STATEMENT_LENGTH = 3 characters
+
+Dangerous patterns blocked:
+- <script> tags
+- javascript: URLs
+- Event handlers (onclick, onload, etc.)
+- data:text/html URLs
+- Null bytes (\x00)
+- Encoded characters that might be malicious
+
+Methods:
+- validate_statement(statement): Validate news statement input
+- validate_speaker(speaker): Validate speaker name input
+- sanitize_for_api(text): Sanitize text for external API calls
+
+Sanitization performed:
+1. HTML escaping (prevents XSS)
+2. Null byte removal
+3. Whitespace normalization
+4. Length limiting for API calls
+5. Special character filtering for names
+
+Return format:
+{
+    'valid': bool,       # Whether input passes validation
+    'sanitized': str,    # Cleaned input (if valid)
+    'error': str         # Error message (if invalid)
+}
+
+--------------------------------------------------------------------------------
+CONVENIENCE FUNCTIONS:
+--------------------------------------------------------------------------------
+
+validate_and_sanitize_input(statement, speaker=None)
+- Validates both statement and speaker in one call
+- Returns combined validation result with all errors
+
+get_secure_api_key()
+- Shortcut to get API key from SecureConfig
+
+is_api_configured()
+- Check if API key is available and valid
+
+--------------------------------------------------------------------------------
+CHANGES TO factcheck_api.py:
+--------------------------------------------------------------------------------
+
+1. REPLACED DIRECT API KEY LOADING
+   Old code:
+     from dotenv import load_dotenv
+     load_dotenv()
+     FACTCHECK_API_KEY = os.getenv('GOOGLE_FACTCHECK_API_KEY')
+
+   New code:
+     from security import secure_config, is_api_configured, InputValidator
+     def _get_api_key():
+         return secure_config.get_api_key('GOOGLE_FACTCHECK_API_KEY')
+
+2. ADDED INPUT SANITIZATION FOR API CALLS
+   Before sending to Google API:
+     sanitized_query = InputValidator.sanitize_for_api(query)
+
+   This prevents:
+   - Injection attacks via API parameters
+   - Oversized queries that could cause issues
+   - Malicious Unicode characters
+
+3. GRACEFUL FALLBACK
+   If security module is not available:
+   - Falls back to original dotenv-based loading
+   - Prints warning but continues to function
+   - Maintains backward compatibility
+
+--------------------------------------------------------------------------------
+CHANGES TO prediction.py:
+--------------------------------------------------------------------------------
+
+1. ADDED SECURITY MODULE IMPORT
+   try:
+       from security import validate_and_sanitize_input, InputValidator
+       SECURITY_ENABLED = True
+   except ImportError:
+       SECURITY_ENABLED = False
+
+2. ADDED INPUT VALIDATION IN MAIN LOOP
+   Before processing user input:
+
+   if SECURITY_ENABLED:
+       validation_result = validate_and_sanitize_input(var)
+       if not validation_result['valid']:
+           print("[SECURITY] Input validation failed:")
+           for error in validation_result['errors']:
+               print(f"  - {error}")
+           continue
+       var = validation_result['statement']
+
+3. ADDED SPEAKER NAME VALIDATION
+   if SECURITY_ENABLED:
+       speaker_validation = InputValidator.validate_speaker(speaker_input)
+       if not speaker_validation['valid']:
+           print(f"[SECURITY] Speaker name validation failed")
+           speaker = None
+       else:
+           speaker = speaker_validation['sanitized']
+
+4. ADDED VALIDATION IN detecting_fake_news()
+   if SECURITY_ENABLED:
+       validation = InputValidator.validate_statement(var)
+       if not validation['valid']:
+           print(f"Error: {validation['error']}")
+           return
+       var = validation['sanitized']
+
+--------------------------------------------------------------------------------
+SECURITY BENEFITS:
+--------------------------------------------------------------------------------
+
+1. DEFENSE IN DEPTH
+   Multiple layers of validation:
+   - At input (user provides statement)
+   - Before processing (ML model)
+   - Before API calls (Google Fact Check)
+
+2. CENTRALIZED SECURITY
+   All security logic in one module:
+   - Easier to audit
+   - Consistent behavior
+   - Single point of updates
+
+3. FAIL-SAFE DEFAULTS
+   - Unknown speakers get neutral score (0.5)
+   - Failed validation stops processing (no bypass)
+   - API failures fall back to ML-only prediction
+
+4. TRANSPARENT FEEDBACK
+   Users see exactly why input was rejected:
+   - "Statement too short. Minimum 3 characters required."
+   - "Input contains potentially unsafe content."
+   - "Statement too long. Maximum 5000 characters allowed."
+
+5. PROTECTION WITHOUT DISRUPTION
+   - Valid inputs pass through unchanged (after sanitization)
+   - System continues to work normally
+   - Security is invisible to normal users
+
+--------------------------------------------------------------------------------
+EXAMPLE SECURITY IN ACTION:
+
+Input: "<script>alert('xss')</script>"
+Output:
+  [SECURITY] Input validation failed:
+    - Input contains potentially unsafe content.
+  Please try again with valid input.
+
+Input: "ab"
+Output:
+  [SECURITY] Input validation failed:
+    - Statement too short. Minimum 3 characters required.
+  Please try again with valid input.
+
+Input: "A" * 6000
+Output:
+  [SECURITY] Input validation failed:
+    - Statement too long. Maximum 5000 characters allowed.
+  Please try again with valid input.
+
+Input: "The president announced new policies today"
+Output: (proceeds normally with sanitized input)
+
+--------------------------------------------------------------------------------
+TESTING THE SECURITY MODULE:
+
+Run: python security.py
+
+This runs the built-in test suite:
+1. Tests secure config loading
+2. Tests input validation with various test cases
+3. Tests speaker name validation
+4. Shows pass/fail for each test
+
+Expected output:
+  ✓ 'Normal statement about politics' -> valid=True
+  ✓ '' -> valid=False (empty)
+  ✓ 'ab' -> valid=False (too short)
+  ✓ '<script>alert('xss')</script>' -> valid=False (XSS)
+  ✓ 'AAAA...' -> valid=False (too long)
+
+================================================================================
+
+Last Updated: 2025-01-28
 Maintained by: Project Development Team

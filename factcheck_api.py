@@ -3,17 +3,42 @@
 #
 # This module provides functions to query the Google Fact Check Tools API
 # to cross-reference claims with professional fact-checking organizations.
+#
+# SECURITY: Uses secure configuration loading from security.py
 
-import os
 import requests
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Import security module for secure API key handling
+try:
+    from security import secure_config, is_api_configured, InputValidator
+    SECURITY_MODULE_AVAILABLE = True
+except ImportError:
+    SECURITY_MODULE_AVAILABLE = False
+    print("[SECURITY] Warning: security module not found. Using fallback.")
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
 
 # API Configuration
-FACTCHECK_API_KEY = os.getenv('GOOGLE_FACTCHECK_API_KEY')
 FACTCHECK_API_URL = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+
+
+def _get_api_key():
+    """
+    Get API key securely using the security module.
+
+    Returns:
+        str or None: The API key if configured, None otherwise
+    """
+    if SECURITY_MODULE_AVAILABLE:
+        return secure_config.get_api_key('GOOGLE_FACTCHECK_API_KEY')
+    else:
+        # Fallback for when security module is not available
+        import os
+        key = os.getenv('GOOGLE_FACTCHECK_API_KEY')
+        if key and key != 'YOUR_API_KEY_HERE':
+            return key
+        return None
 
 
 def check_api_configured():
@@ -23,7 +48,7 @@ def check_api_configured():
     Returns:
         bool: True if API key is set, False otherwise
     """
-    return FACTCHECK_API_KEY is not None and FACTCHECK_API_KEY != 'YOUR_API_KEY_HERE'
+    return _get_api_key() is not None
 
 
 def search_fact_checks(query, language_code='en', max_results=5):
@@ -56,10 +81,19 @@ def search_fact_checks(query, language_code='en', max_results=5):
         }
 
     try:
+        # Get API key securely
+        api_key = _get_api_key()
+
+        # Sanitize query for API call (if security module available)
+        if SECURITY_MODULE_AVAILABLE:
+            sanitized_query = InputValidator.sanitize_for_api(query)
+        else:
+            sanitized_query = query
+
         # Prepare API request parameters
         params = {
-            'key': FACTCHECK_API_KEY,
-            'query': query,
+            'key': api_key,
+            'query': sanitized_query,
             'languageCode': language_code,
             'pageSize': max_results
         }

@@ -7,6 +7,7 @@ Updated: 2025-01-15 - Added keyword highlighting feature
 Updated: 2025-01-15 - Added model comparison tracker (old vs enhanced)
 Updated: 2025-01-15 - Added speaker credibility feature (from utils.py)
 Updated: 2025-01-15 - Added Google Fact Check API integration
+Updated: 2025-01-28 - Added security: input validation & secure API key loading
 """
 
 import pickle
@@ -18,6 +19,15 @@ import os
 # Suppress sklearn version warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+# Import security module for input validation
+try:
+    from security import validate_and_sanitize_input, InputValidator, secure_config
+    SECURITY_ENABLED = True
+    print("Security Module: Enabled (input validation active)")
+except ImportError:
+    SECURITY_ENABLED = False
+    print("Security Module: Not available")
 
 # Import fact-check API module
 try:
@@ -886,8 +896,14 @@ def detecting_fake_news(var):
     2. Confidence score
     3. Keywords that influenced the prediction
     """
-    # Validate input
-    if not var or not var.strip():
+    # Validate input using security module if available
+    if SECURITY_ENABLED:
+        validation = InputValidator.validate_statement(var)
+        if not validation['valid']:
+            print(f"Error: {validation['error']}")
+            return
+        var = validation['sanitized']
+    elif not var or not var.strip():
         print("Error: Please enter a valid statement.")
         return
 
@@ -973,12 +989,36 @@ if __name__ == '__main__':
             continue
 
         if var.strip():
+            # ========================================
+            # SECURITY: Validate and sanitize input
+            # ========================================
+            if SECURITY_ENABLED:
+                validation_result = validate_and_sanitize_input(var)
+                if not validation_result['valid']:
+                    print("\n[SECURITY] Input validation failed:")
+                    for error in validation_result['errors']:
+                        print(f"  - {error}")
+                    print("Please try again with valid input.\n")
+                    continue
+                # Use sanitized input
+                var = validation_result['statement']
+
             # Ask for speaker name (optional)
             speaker = None
             if current_mode in [1, 2]:  # Only ask for speaker in comparison/enhanced modes
                 speaker_input = input("Enter speaker name (or press Enter to skip): ").strip()
                 if speaker_input:
-                    speaker = speaker_input
+                    # Validate speaker name if security is enabled
+                    if SECURITY_ENABLED:
+                        speaker_validation = InputValidator.validate_speaker(speaker_input)
+                        if not speaker_validation['valid']:
+                            print(f"\n[SECURITY] Speaker name validation failed: {speaker_validation['error']}")
+                            print("Continuing without speaker...\n")
+                            speaker = None
+                        else:
+                            speaker = speaker_validation['sanitized'] if speaker_validation['sanitized'] else speaker_input
+                    else:
+                        speaker = speaker_input
 
             if current_mode == 1:
                 # Comparison mode - show both models
