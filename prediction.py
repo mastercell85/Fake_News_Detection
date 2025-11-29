@@ -6,6 +6,7 @@ Created on Mon Dec  4 17:45:40 2017
 Updated: 2025-01-15 - Added keyword highlighting feature
 Updated: 2025-01-15 - Added model comparison tracker (old vs enhanced)
 Updated: 2025-01-15 - Added speaker credibility feature (from utils.py)
+Updated: 2025-01-15 - Added Google Fact Check API integration
 """
 
 import pickle
@@ -17,6 +18,18 @@ import os
 # Suppress sklearn version warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+# Import fact-check API module
+try:
+    from factcheck_api import get_fact_check_summary, check_api_configured, display_fact_check_results
+    FACTCHECK_AVAILABLE = check_api_configured()
+    if FACTCHECK_AVAILABLE:
+        print("Google Fact Check API: Enabled")
+    else:
+        print("Google Fact Check API: Not configured (set API key in .env)")
+except ImportError:
+    FACTCHECK_AVAILABLE = False
+    print("Google Fact Check API: Module not found")
 
 # Load model once at startup (more efficient)
 print("Loading model...")
@@ -204,22 +217,24 @@ def baseline_prediction(statement):
 # ENHANCED MODEL (New Prediction - With keyword analysis)
 # ============================================================================
 
-def enhanced_prediction(statement, speaker=None):
+def enhanced_prediction(statement, speaker=None, use_factcheck=True):
     """
-    Enhanced prediction function with keyword analysis and speaker credibility.
+    Enhanced prediction function with keyword analysis, speaker credibility, and fact-check API.
 
     This is the NEW model behavior - includes all enhancements:
     - Keyword highlighting
     - Impact analysis
     - Explanation generation
-    - Speaker credibility scoring (NEW)
+    - Speaker credibility scoring
+    - Google Fact Check API integration (NEW)
 
     Args:
         statement (str): The news text to analyze
         speaker (str): Optional speaker/author name for credibility lookup
+        use_factcheck (bool): Whether to query Google Fact Check API (default: True)
 
     Returns:
-        dict: Contains prediction, probability, keywords, explanation, and speaker info
+        dict: Contains prediction, probability, keywords, explanation, speaker info, and fact-check data
     """
     # Make prediction using the base model
     prediction = load_model.predict([statement])[0]
@@ -239,8 +254,9 @@ def enhanced_prediction(statement, speaker=None):
     # Get influential keywords
     influential_words = get_influential_words(statement, load_model)
 
-    # Generate explanation
+    # Generate explanation (will be updated later if prediction is flipped)
     explanation = generate_explanation(prediction, influential_words)
+    original_explanation = explanation  # Keep original for reference
 
     # Calculate enhancement score (how much keyword analysis adds)
     enhancement_score = calculate_enhancement_score(influential_words)
@@ -309,6 +325,8 @@ def enhanced_prediction(statement, speaker=None):
                     adjusted_confidence = min(100, (0.5 - speaker_score) * 100 + (100 - ml_confidence) * 0.5)
                     speaker_data['prediction_flipped'] = True
                     speaker_data['flip_reason'] = f"Speaker credibility ({speaker_score:.2f}) is very low and ML was uncertain ({ml_confidence:.1f}%)"
+                    # Update explanation to reflect the flip
+                    explanation = f"Predicted FALSE because speaker '{matched_speaker}' has very low credibility (0.27) based on historical fact-checks."
                 else:
                     adjusted_confidence = min(100, max(0, ml_confidence + speaker_adjustment))
             else:  # ML says FALSE (numpy.bool False)
@@ -323,6 +341,8 @@ def enhanced_prediction(statement, speaker=None):
                     adjusted_confidence = min(100, (speaker_score - 0.5) * 100 + (100 - ml_confidence) * 0.5)
                     speaker_data['prediction_flipped'] = True
                     speaker_data['flip_reason'] = f"Speaker credibility ({speaker_score:.2f}) is high and ML was uncertain ({ml_confidence:.1f}%)"
+                    # Update explanation to reflect the flip
+                    explanation = f"Predicted TRUE because speaker '{matched_speaker}' has high credibility ({speaker_score:.2f}) based on historical fact-checks."
                 else:
                     adjusted_confidence = min(100, max(0, ml_confidence + speaker_adjustment))
         else:
@@ -333,22 +353,73 @@ def enhanced_prediction(statement, speaker=None):
                 'message': 'Speaker not found in database. Using neutral score.'
             }
 
+    # ========================================
+    # GOOGLE FACT CHECK API INTEGRATION
+    # ========================================
+    factcheck_data = None
+    factcheck_adjustment = 0
+
+    if use_factcheck and FACTCHECK_AVAILABLE:
+        # Query Google Fact Check API
+        factcheck_data = get_fact_check_summary(statement)
+
+        if factcheck_data.get('available', False):
+            # Get the confidence modifier from fact-check results
+            factcheck_adjustment = factcheck_data.get('confidence_modifier', 0)
+            verdict = factcheck_data.get('verdict', 'UNKNOWN')
+
+            # Apply fact-check adjustment to confidence
+            # Fact-check is authoritative, so it can significantly affect the result
+            if verdict == 'FALSE':
+                # Fact-checkers say FALSE - if we predicted TRUE, flip it
+                if final_prediction:  # Currently predicting TRUE
+                    # Strong evidence it's false - flip prediction
+                    final_prediction = False
+                    adjusted_confidence = min(100, max(50, 70 + abs(factcheck_adjustment) * 0.5))
+                    factcheck_data['prediction_flipped'] = True
+                    factcheck_data['flip_reason'] = f"Professional fact-checkers rate this claim as FALSE"
+                    # Update explanation to reflect fact-check override
+                    explanation = f"Predicted FALSE because professional fact-checkers (PolitiFact, Snopes, etc.) have rated this claim as false."
+                else:
+                    # Already predicting FALSE - boost confidence
+                    adjusted_confidence = min(100, adjusted_confidence + abs(factcheck_adjustment))
+
+            elif verdict == 'TRUE':
+                # Fact-checkers say TRUE - if we predicted FALSE, flip it
+                if not final_prediction:  # Currently predicting FALSE
+                    # Strong evidence it's true - flip prediction
+                    final_prediction = True
+                    adjusted_confidence = min(100, max(50, 70 + abs(factcheck_adjustment) * 0.5))
+                    factcheck_data['prediction_flipped'] = True
+                    factcheck_data['flip_reason'] = f"Professional fact-checkers rate this claim as TRUE"
+                    # Update explanation to reflect fact-check override
+                    explanation = f"Predicted TRUE because professional fact-checkers (PolitiFact, Snopes, etc.) have verified this claim as true."
+                else:
+                    # Already predicting TRUE - boost confidence
+                    adjusted_confidence = min(100, adjusted_confidence + abs(factcheck_adjustment))
+
+            # For MIXED or INCONCLUSIVE, don't change prediction, just note it
+
     return {
         'method': 'ENHANCED (New Model)',
-        'prediction': final_prediction,  # May differ from ML prediction if speaker flipped it
-        'ml_prediction': prediction,      # Original ML prediction (before speaker adjustment)
+        'prediction': final_prediction,  # May differ from ML prediction if speaker/factcheck flipped it
+        'ml_prediction': prediction,      # Original ML prediction (before adjustments)
         'ml_confidence': ml_confidence,
-        'confidence': adjusted_confidence,  # Final confidence (after speaker adjustment)
+        'confidence': adjusted_confidence,  # Final confidence (after all adjustments)
         'prob_true': prob_true,
         'prob_false': prob_false,
         'has_keywords': True,
         'has_explanation': True,
         'has_speaker_credibility': speaker_data is not None,
+        'has_factcheck': factcheck_data is not None and factcheck_data.get('available', False),
         'keywords': influential_words,
         'explanation': explanation,
+        'original_ml_explanation': original_explanation,  # What ML alone would have said
         'enhancement_score': enhancement_score,
         'speaker': speaker_data,
-        'speaker_adjustment': speaker_adjustment
+        'speaker_adjustment': speaker_adjustment,
+        'factcheck': factcheck_data,
+        'factcheck_adjustment': factcheck_adjustment
     }
 
 
@@ -491,14 +562,19 @@ def display_comparison(comparison):
     print("\n" + "-"*70)
     print(f"{'BASELINE (Old Model)':<35} | {'ENHANCED (New Model)':<35}")
     print("-"*70)
-    print(f"Prediction: {baseline['prediction']:<23} | Prediction: {enhanced['prediction']:<23}")
-    print(f"Confidence: {baseline['confidence']:<22.2f}% | Confidence: {enhanced['confidence']:<22.2f}%")
+    # Convert predictions to readable True/False strings
+    baseline_pred = "True" if baseline['prediction'] else "False"
+    enhanced_pred = "True" if enhanced['prediction'] else "False"
+    print(f"Prediction: {baseline_pred:<23} | Prediction: {enhanced_pred:<23}")
+    print(f"Confidence: {baseline['confidence']:.2f}%{'':<17} | Confidence: {enhanced['confidence']:.2f}%")
     print(f"Keywords:   {'No':<23} | Keywords:   {'Yes':<23}")
     print(f"Explanation: {'No':<22} | Explanation: {'Yes':<22}")
 
     # Show speaker credibility status
     has_speaker = enhanced.get('has_speaker_credibility', False)
+    has_factcheck = enhanced.get('has_factcheck', False)
     print(f"Speaker Cred: {'No':<21} | Speaker Cred: {'Yes' if has_speaker else 'No':<21}")
+    print(f"Fact Check:   {'No':<21} | Fact Check:   {'Yes' if has_factcheck else 'No':<21}")
     print("-"*70)
 
     # Agreement status
@@ -569,6 +645,65 @@ def display_comparison(comparison):
             print(f"  Status: NOT FOUND in database")
             print(f"  Using neutral credibility score: 0.50")
 
+    # ========================================
+    # FACT CHECK API SECTION
+    # ========================================
+    if enhanced.get('factcheck'):
+        factcheck_data = enhanced['factcheck']
+        print("\n" + "-"*70)
+        print("GOOGLE FACT CHECK API RESULTS:")
+        print("-"*70)
+
+        if factcheck_data.get('available', False):
+            verdict = factcheck_data.get('verdict', 'UNKNOWN')
+
+            # Display verdict with visual indicator
+            if verdict == 'FALSE':
+                print(f"  Verdict: [X] FALSE - Fact-checkers rate this claim as false")
+            elif verdict == 'TRUE':
+                print(f"  Verdict: [✓] TRUE - Fact-checkers rate this claim as true")
+            elif verdict == 'MIXED':
+                print(f"  Verdict: [~] MIXED - Fact-checkers have mixed ratings")
+            else:
+                print(f"  Verdict: [?] {verdict} - Unable to determine clear verdict")
+
+            # Show if prediction was flipped by fact-check
+            if factcheck_data.get('prediction_flipped'):
+                print(f"\n  ** PREDICTION OVERRIDDEN BY FACT-CHECK **")
+                print(f"  Reason: {factcheck_data.get('flip_reason', 'Fact-check evidence')}")
+
+            # Show rating breakdown
+            breakdown = factcheck_data.get('rating_breakdown', {})
+            if breakdown:
+                print(f"\n  Rating Breakdown:")
+                print(f"    False ratings: {breakdown.get('false', 0)}")
+                print(f"    True ratings:  {breakdown.get('true', 0)}")
+                print(f"    Mixed ratings: {breakdown.get('mixed', 0)}")
+
+            # Show confidence impact
+            modifier = enhanced.get('factcheck_adjustment', 0)
+            if modifier != 0:
+                print(f"\n  Confidence Impact: {modifier:+.1f}%")
+
+            # Show sources
+            sources = factcheck_data.get('sources', [])
+            if sources:
+                print(f"\n  Sources ({len(sources)} fact-checks found):")
+                for i, source in enumerate(sources[:3], 1):  # Show top 3 sources
+                    print(f"    {i}. {source['publisher']}: {source['rating']}")
+                    if source.get('url'):
+                        # Truncate long URLs
+                        url = source['url']
+                        if len(url) > 50:
+                            url = url[:50] + "..."
+                        print(f"       {url}")
+        else:
+            if factcheck_data.get('error'):
+                print(f"  Error: {factcheck_data['error']}")
+            else:
+                print("  No fact-checks found for this claim.")
+                print("  (The claim may not have been reviewed by fact-checkers yet)")
+
     # Enhancement value
     print("\n" + "-"*70)
     print("KEYWORD ANALYSIS:")
@@ -593,6 +728,22 @@ def display_comparison(comparison):
 
     # Explanation
     print(f"\n  Explanation: {enhanced['explanation']}")
+
+    # Show final summary if prediction was modified
+    if enhanced.get('speaker') and enhanced['speaker'].get('prediction_flipped'):
+        print("\n" + "-"*70)
+        print("FINAL VERDICT:")
+        print("-"*70)
+        final_pred = "FALSE (Fake News)" if not enhanced['prediction'] else "TRUE (Real News)"
+        print(f"  {final_pred}")
+        print(f"  Reason: Speaker's low credibility overrode uncertain ML prediction")
+    elif enhanced.get('factcheck') and enhanced['factcheck'].get('prediction_flipped'):
+        print("\n" + "-"*70)
+        print("FINAL VERDICT:")
+        print("-"*70)
+        final_pred = "FALSE (Fake News)" if not enhanced['prediction'] else "TRUE (Real News)"
+        print(f"  {final_pred}")
+        print(f"  Reason: Professional fact-checkers overrode ML prediction")
 
     print("="*70 + "\n")
 
@@ -854,6 +1005,22 @@ if __name__ == '__main__':
                     print(f"\nSpeaker Credibility: {spk['credibility_score']:.2f}")
                     if spk.get('job_title') and spk['job_title'] != 'Unknown':
                         print(f"Job Title: {spk['job_title']}")
+
+                # Show fact-check results
+                if result.get('factcheck'):
+                    fc = result['factcheck']
+                    print("\n" + "-"*70)
+                    print("FACT CHECK RESULTS:")
+                    if fc.get('available'):
+                        verdict = fc.get('verdict', 'UNKNOWN')
+                        print(f"  Verdict: {verdict}")
+                        if fc.get('prediction_flipped'):
+                            print(f"  ** Prediction was overridden by fact-check **")
+                        sources = fc.get('sources', [])
+                        if sources:
+                            print(f"  Sources: {', '.join([s['publisher'] for s in sources[:3]])}")
+                    else:
+                        print("  No fact-checks found for this claim.")
 
                 # Show keywords
                 print("\n" + "-"*70)
