@@ -4,6 +4,14 @@ Fake News Detection in Python
 
 In this project, we have used various natural language processing techniques and machine learning algorithms to classify fake news articles using sci-kit libraries from python. 
 
+
+## Foundational Paper 
+- https://aclanthology.org/D14-1181.pdf
+Kim’s 2014 CNN model is one of the core foundations of modern text classification. The LIAR paper directly compares its results against CNN-based approaches, showing how deep learning can extract patterns in short political statements. Kim’s work demonstrates that models can learn meaningful linguistic features even from short text segments
+## Contemporary Paper
+ - https://aclanthology.org/D19-1475.pdf 
+This paper explicitly cites and builds on the LIAR dataset as one of the earliest structured resources for political fact-checking. While LIAR introduced labeled truthfulness and metadata, MultiFC expands this idea to multiple domains and much larger real-world datasets. The authors highlight the need for richer contextual information in fake-news detection, including properties of the source, claim, and speaker, which directly supports our project’s addition of speaker credibility scores.
+
 ## Getting Started
 
 These instructions will get you a copy of the project up and running on your local machine for development and testing purposes. See deployment for notes on how to deploy the project on a live system.
